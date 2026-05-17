@@ -303,12 +303,29 @@ fn extract_request_display_meta(
     }
 }
 
-fn default_decision_for(bubble_data: &permission::BubbleData) -> HookDecision {
+fn default_decision_for(app: &AppHandle, bubble_data: &permission::BubbleData) -> HookDecision {
+    let auto_approve = app
+        .try_state::<crate::prefs::SharedPrefs>()
+        .map(|prefs| prefs.lock_or_recover().auto_approve)
+        .unwrap_or(false);
     if bubble_data.is_elicitation {
         HookDecision::Elicitation(ElicitationDecision::Cancel)
+    } else if auto_approve {
+        HookDecision::Permission(PermDecision::Allow)
     } else {
         HookDecision::Permission(PermDecision::Deny)
     }
+}
+
+fn auto_approve_timeout(app: &AppHandle) -> Duration {
+    app.try_state::<crate::prefs::SharedPrefs>()
+        .map(|prefs: tauri::State<crate::prefs::SharedPrefs>| {
+            let secs = crate::prefs::normalize_auto_approve_timeout_secs(
+                prefs.lock_or_recover().auto_approve_timeout_secs,
+            ) as u64;
+            Duration::from_secs(secs)
+        })
+        .unwrap_or(Duration::from_secs(20))
 }
 
 fn request_is_elicitation(approval_queue: &ApprovalQueue, id: &str) -> bool {
@@ -440,7 +457,7 @@ async fn queue_request_and_wait(
     bubble_data: permission::BubbleData,
 ) -> HookDecision {
     let entry_id = bubble_data.id.clone();
-    let default_decision = default_decision_for(&bubble_data);
+    let default_decision = default_decision_for(&ctx.app, &bubble_data);
     let bubble_session_id = bubble_data.session_id.clone();
     let (tx, rx) = oneshot::channel::<HookDecision>();
     ctx.pending_perms
@@ -455,8 +472,16 @@ async fn queue_request_and_wait(
     let watchdog_id = entry_id.clone();
     let watchdog_default = default_decision.clone();
     let opened_at = std::time::Instant::now();
-    let session_advance_grace_deadline =
-        tokio::time::Instant::now() + request_decision_window(&ctx.app);
+    let auto_approve = ctx
+        .app
+        .try_state::<crate::prefs::SharedPrefs>()
+        .map(|prefs| prefs.lock_or_recover().auto_approve)
+        .unwrap_or(false);
+    let session_advance_grace_deadline = if auto_approve {
+        tokio::time::Instant::now() + auto_approve_timeout(&ctx.app)
+    } else {
+        tokio::time::Instant::now() + request_decision_window(&ctx.app)
+    };
     let session_existed_at_open = {
         let sm = ctx.state.lock_or_recover();
         sm.sessions.contains_key(&bubble_session_id)
@@ -743,7 +768,7 @@ fn show_permission_or_deny(
     }
 
     if let Some(tx) = pending_perms.lock_or_recover().remove(&bubble_data.id) {
-        let _ = tx.send(default_decision_for(&bubble_data));
+        let _ = tx.send(default_decision_for(app, &bubble_data));
     }
 
     {
@@ -800,7 +825,7 @@ fn cancel_permission_request(
         .request_data
         .get(id)
         .cloned()
-        .map(|data| default_decision_for(&data))
+        .map(|data| default_decision_for(app, &data))
         .unwrap_or(HookDecision::Permission(PermDecision::Deny));
     if let Some(tx) = pending_perms.lock_or_recover().remove(id) {
         let _ = tx.send(default_decision);

@@ -54,6 +54,10 @@ pub struct Prefs {
     pub auto_hide_fullscreen: bool,
     #[serde(default)]
     pub auto_dnd_meetings: bool,
+    #[serde(default)]
+    pub auto_approve: bool,
+    #[serde(default = "default_auto_approve_timeout_secs")]
+    pub auto_approve_timeout_secs: u16,
     #[serde(default = "default_permission_decision_window_secs")]
     pub permission_decision_window_secs: u16,
     #[serde(default)]
@@ -103,6 +107,14 @@ fn default_permission_decision_window_secs() -> u16 {
     DEFAULT_PERMISSION_DECISION_WINDOW_SECS
 }
 
+fn default_auto_approve_timeout_secs() -> u16 {
+    20
+}
+
+pub fn normalize_auto_approve_timeout_secs(secs: u16) -> u16 {
+    secs.clamp(5, 60)
+}
+
 pub fn normalize_opacity(opacity: f32) -> f32 {
     opacity.clamp(0.4, 1.0)
 }
@@ -131,6 +143,8 @@ impl Default for Prefs {
             click_through: false,
             auto_hide_fullscreen: false,
             auto_dnd_meetings: false,
+            auto_approve: false,
+            auto_approve_timeout_secs: default_auto_approve_timeout_secs(),
             permission_decision_window_secs: default_permission_decision_window_secs(),
             monitor_positions: HashMap::new(),
             check_for_updates: true,
@@ -161,6 +175,8 @@ pub fn load(app: &AppHandle) -> Prefs {
     prefs.opacity = normalize_opacity(prefs.opacity);
     prefs.permission_decision_window_secs =
         normalize_permission_decision_window_secs(prefs.permission_decision_window_secs);
+    prefs.auto_approve_timeout_secs =
+        normalize_auto_approve_timeout_secs(prefs.auto_approve_timeout_secs);
     prefs
 }
 
@@ -238,5 +254,33 @@ mod tests {
         let roundtrip: Prefs = serde_json::from_str(&json).unwrap();
         assert_eq!(roundtrip.bubble_offset_x, 48);
         assert_eq!(roundtrip.bubble_offset_y, -96);
+    }
+    #[test]
+    fn test_default_auto_approve_timeout_secs() {
+        assert_eq!(default_auto_approve_timeout_secs(), 20);
+    }
+    #[test]
+    fn test_auto_approve_timeout_normalization() {
+        assert_eq!(normalize_auto_approve_timeout_secs(3), 5);
+        assert_eq!(normalize_auto_approve_timeout_secs(20), 20);
+        assert_eq!(normalize_auto_approve_timeout_secs(90), 60);
+    }
+    #[test]
+    fn test_prefs_default_auto_approve() {
+        let p = Prefs::default();
+        assert!(!p.auto_approve);
+        assert_eq!(p.auto_approve_timeout_secs, 20);
+    }
+    #[test]
+    fn test_prefs_roundtrip_preserves_auto_approve() {
+        let prefs = Prefs {
+            auto_approve: true,
+            auto_approve_timeout_secs: 45,
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&prefs).unwrap();
+        let roundtrip: Prefs = serde_json::from_str(&json).unwrap();
+        assert!(roundtrip.auto_approve);
+        assert_eq!(roundtrip.auto_approve_timeout_secs, 45);
     }
 }

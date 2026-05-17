@@ -55,6 +55,14 @@ fn build_menu(app: &AppHandle, lang: &str) -> tauri::Result<Menu<tauri::Wry>> {
         .as_ref()
         .map(|prefs| prefs.auto_start_with_claude)
         .unwrap_or(false);
+    let auto_approve = prefs
+        .as_ref()
+        .map(|prefs| prefs.auto_approve)
+        .unwrap_or(false);
+    let auto_approve_timeout_secs = prefs
+        .as_ref()
+        .map(|prefs| prefs.auto_approve_timeout_secs)
+        .unwrap_or(20);
     let is_mini = prefs.as_ref().map(|prefs| prefs.mini_mode).unwrap_or(false);
     let is_dnd = app
         .try_state::<SharedState>()
@@ -200,6 +208,30 @@ fn build_menu(app: &AppHandle, lang: &str) -> tauri::Result<Menu<tauri::Wry>> {
     };
     let autostart = MenuItem::with_id(app, "autostart", autostart_label, true, None::<&str>)?;
 
+    let auto_approve_label = if auto_approve { format!("✓ {}", t("autoApprove", lang)) } else { t("autoApprove", lang).into() };
+    let auto_approve_item = MenuItem::with_id(app, "auto-approve", &auto_approve_label, true, None::<&str>)?;
+
+    let mut auto_approve_timeout_items = Vec::new();
+    for secs in [5_u16, 20, 45] {
+        let label = if auto_approve_timeout_secs == secs {
+            format!("✓ {secs}s")
+        } else {
+            format!("{secs}s")
+        };
+        auto_approve_timeout_items.push(MenuItem::with_id(
+            app,
+            format!("auto-approve-timeout-{secs}"),
+            &label,
+            true,
+            None::<&str>,
+        )?);
+    }
+    let auto_approve_timeout_refs: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> = auto_approve_timeout_items
+        .iter()
+        .map(|item| item as &dyn tauri::menu::IsMenuItem<tauri::Wry>)
+        .collect();
+    let auto_approve_timeout_sub = Submenu::with_items(app, t("autoApproveTimeout", lang), true, &auto_approve_timeout_refs)?;
+
     let check_updates_item = MenuItem::with_id(app, "check-for-updates", t("checkForUpdates", lang), true, None::<&str>)?;
 
     Menu::with_items(
@@ -217,6 +249,8 @@ fn build_menu(app: &AppHandle, lang: &str) -> tauri::Result<Menu<tauri::Wry>> {
             &permission_wait_sub,
             &lang_sub,
             &autostart,
+            &auto_approve_item,
+            &auto_approve_timeout_sub,
             &check_updates_item,
             &quit,
         ],
@@ -331,6 +365,18 @@ fn handle_tray_event(app: &AppHandle, id: &str) {
         }
         "autostart" => {
             crate::toggle_autostart_pref(app);
+            rebuild_current_menu(app);
+        }
+        "auto-approve" => {
+            crate::toggle_auto_approve_pref(app);
+            rebuild_current_menu(app);
+        }
+        "auto-approve-timeout-5" | "auto-approve-timeout-20" | "auto-approve-timeout-45" => {
+            let secs = id
+                .strip_prefix("auto-approve-timeout-")
+                .and_then(|value| value.parse::<u16>().ok())
+                .unwrap_or(20);
+            crate::set_auto_approve_timeout_secs(app, secs);
             rebuild_current_menu(app);
         }
         "mini" => {

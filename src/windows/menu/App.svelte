@@ -22,6 +22,8 @@
     size: string;
     opacity: number;
     permission_decision_window_secs: number;
+    auto_approve: boolean;
+    auto_approve_timeout_secs: number;
     position_locked: boolean;
     click_through: boolean;
     auto_hide_fullscreen: boolean;
@@ -54,7 +56,8 @@
       restoreInteraction: '恢复交互',
       opacity: '透明度', permissionWaitTime: '权限等待时间', lockPosition: '锁定位置', clickThrough: '点击穿透',
       hideOnFullscreen: '全屏时自动隐藏', autoDndMeetings: '会议/共享时自动勿扰',
-      autoStart: '随 Claude Code 启动', sessions: '会话', language: '语言', quit: '退出',
+      autoStart: '随 Claude Code 启动', autoApprove: '自动同意', autoApproveTimeout: '自动同意超时',
+      sessions: '会话', language: '语言', quit: '退出',
       clickThroughHint: '开启后可从托盘菜单的“恢复交互”关闭',
       noSessions: '没有活跃会话', justNow: '刚刚', macOnly: '仅 macOS',
     };
@@ -63,7 +66,8 @@
       restoreInteraction: 'Restore Interaction',
       opacity: 'Opacity', permissionWaitTime: 'Permission Wait Time', lockPosition: 'Lock Position', clickThrough: 'Click Through',
       hideOnFullscreen: 'Hide on Fullscreen', autoDndMeetings: 'Auto DND During Meetings',
-      autoStart: 'Start with Claude Code', sessions: 'Sessions', language: 'Language', quit: 'Quit',
+      autoStart: 'Start with Claude Code', autoApprove: 'Auto Approve', autoApproveTimeout: 'Auto Approve Timeout',
+      sessions: 'Sessions', language: 'Language', quit: 'Quit',
       clickThroughHint: 'Turn it off from the tray menu with Restore Interaction',
       noSessions: 'No active sessions', justNow: 'just now', macOnly: 'macOS only',
     };
@@ -256,6 +260,24 @@
     <span>{t('autoStart')}</span>
     {#if data.auto_start_with_claude}<span class="check">✓</span>{/if}
   </button>
+
+  <button class="item" onclick={() => action('auto-approve')}>
+    <span>{t('autoApprove')}</span>
+    {#if data.auto_approve}<span class="check">✓</span>{/if}
+  </button>
+
+  <div class="item has-sub" role="button" tabindex="-1" onmouseenter={() => activeSubmenu = 'auto-approve-timeout'} onmouseleave={() => activeSubmenu = null}>
+    <span>{t('autoApproveTimeout')}</span>
+    <span class="value">{durationLabel(data.auto_approve_timeout_secs)}</span>
+    <span class="arrow">›</span>
+    {#if activeSubmenu === 'auto-approve-timeout'}
+      <div class="submenu">
+        {#each [5, 20, 45] as seconds}
+          <button class="item" class:checked={data.auto_approve_timeout_secs === seconds} onclick={() => action(`auto-approve-timeout-${seconds}`)}>{durationLabel(seconds)}</button>
+        {/each}
+      </div>
+    {/if}
+  </div>
 
   <div class="sep"></div>
 

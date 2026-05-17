@@ -74,6 +74,8 @@ struct MenuData {
     size: String,
     opacity: u8,
     permission_decision_window_secs: u16,
+    auto_approve: bool,
+    auto_approve_timeout_secs: u16,
     position_locked: bool,
     click_through: bool,
     auto_hide_fullscreen: bool,
@@ -316,6 +318,24 @@ pub(crate) fn toggle_auto_dnd_meetings_pref(app: &AppHandle) {
     };
     let mut prefs = prefs_state.lock_or_recover();
     prefs.auto_dnd_meetings = !prefs.auto_dnd_meetings;
+    prefs::save(app, &prefs);
+}
+
+pub(crate) fn toggle_auto_approve_pref(app: &AppHandle) {
+    let Some(prefs_state) = app.try_state::<SharedPrefs>() else {
+        return;
+    };
+    let mut prefs = prefs_state.lock_or_recover();
+    prefs.auto_approve = !prefs.auto_approve;
+    prefs::save(app, &prefs);
+}
+
+pub(crate) fn set_auto_approve_timeout_secs(app: &AppHandle, secs: u16) {
+    let Some(prefs_state) = app.try_state::<SharedPrefs>() else {
+        return;
+    };
+    let mut prefs = prefs_state.lock_or_recover();
+    prefs.auto_approve_timeout_secs = prefs::normalize_auto_approve_timeout_secs(secs);
     prefs::save(app, &prefs);
 }
 
@@ -948,6 +968,8 @@ fn get_menu_data(
         size: prefs.size.clone(),
         opacity: (prefs.opacity * 100.0).round() as u8,
         permission_decision_window_secs: prefs.permission_decision_window_secs,
+        auto_approve: prefs.auto_approve,
+        auto_approve_timeout_secs: prefs.auto_approve_timeout_secs,
         position_locked: prefs.lock_position,
         click_through: prefs.click_through,
         auto_hide_fullscreen: prefs.auto_hide_fullscreen,
@@ -1581,6 +1603,22 @@ fn handle_context_menu_event(app: &AppHandle, state: &SharedState, id: &str) {
             toggle_autostart_pref(app);
             refresh_tray = true;
         }
+        "auto-approve" => {
+            toggle_auto_approve_pref(app);
+            refresh_tray = true;
+        }
+        "auto-approve-timeout-5" => {
+            set_auto_approve_timeout_secs(app, 5);
+            refresh_tray = true;
+        }
+        "auto-approve-timeout-20" => {
+            set_auto_approve_timeout_secs(app, 20);
+            refresh_tray = true;
+        }
+        "auto-approve-timeout-45" => {
+            set_auto_approve_timeout_secs(app, 45);
+            refresh_tray = true;
+        }
         "size-s" => {
             tray::apply_size_pub(app, "S");
             refresh_tray = true;
@@ -1740,13 +1778,26 @@ fn setup_hit_window(app: &AppHandle, initial_bounds: Option<&windows::WindowBoun
 
 fn setup_tray(app: &AppHandle, prefs: &prefs::Prefs, shared_tray: &tray::SharedTray) {
     if prefs.show_tray {
-        match tray::build_tray(app, &prefs.lang) {
-            Ok(tray_icon) => {
-                *shared_tray.lock_or_recover() = Some(tray_icon);
-                println!("Clyde: tray icon created");
+        let mut last_err_msg = None;
+        for attempt in 1..=5 {
+            match tray::build_tray(app, &prefs.lang) {
+                Ok(tray_icon) => {
+                    *shared_tray.lock_or_recover() = Some(tray_icon);
+                    println!("Clyde: tray icon created on attempt {attempt}");
+                    return;
+                }
+                Err(e) => {
+                    let err_msg = e.to_string();
+                    if attempt < 5 {
+                        eprintln!("Clyde: tray creation attempt {attempt} failed: {err_msg}, retrying in 500ms...");
+                        std::thread::sleep(std::time::Duration::from_millis(500));
+                    }
+                    last_err_msg = Some(err_msg);
+                }
             }
-            Err(e) => eprintln!("Clyde: tray error: {e}"),
         }
+        eprintln!("Clyde: tray error after 5 attempts: {}", last_err_msg.unwrap());
+        eprintln!("Clyde: continuing without tray icon");
     }
 }
 
