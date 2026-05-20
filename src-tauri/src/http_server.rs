@@ -763,28 +763,81 @@ fn show_permission_or_deny(
     bubble_map: &permission::BubbleMap,
     bubble_data: permission::BubbleData,
 ) -> bool {
-    if permission::show_bubble(app, bubble_map, bubble_data.clone()) {
-        return true;
-    }
-
-    if let Some(tx) = pending_perms.lock_or_recover().remove(&bubble_data.id) {
-        let _ = tx.send(default_decision_for(app, &bubble_data));
-    }
-
-    {
-        let mut queue = approval_queue.lock_or_recover();
-        queue.request_data.remove(&bubble_data.id);
-        if queue.active_request_id.as_deref() == Some(bubble_data.id.as_str()) {
-            queue.active_request_id = None;
-        } else {
-            queue
-                .queued_request_ids
-                .retain(|queued_id| queued_id != &bubble_data.id);
+    // Always show bubble window first
+    if !permission::show_bubble(app, bubble_map, bubble_data.clone()) {
+        // If bubble creation failed, send default decision immediately
+        if let Some(tx) = pending_perms.lock_or_recover().remove(&bubble_data.id) {
+            let _ = tx.send(default_decision_for(app, &bubble_data));
         }
+        {
+            let mut queue = approval_queue.lock_or_recover();
+            queue.request_data.remove(&bubble_data.id);
+            if queue.active_request_id.as_deref() == Some(bubble_data.id.as_str()) {
+                queue.active_request_id = None;
+            } else {
+                queue
+                    .queued_request_ids
+                    .retain(|queued_id| queued_id != &bubble_data.id);
+            }
+        }
+        activate_next_permission(app, pending_perms, approval_queue, bubble_map);
+        return false;
     }
 
-    activate_next_permission(app, pending_perms, approval_queue, bubble_map);
-    false
+    // Bubble shown successfully - check if auto-approve is enabled
+    let auto_approve = app
+        .try_state::<crate::prefs::SharedPrefs>()
+        .map(|prefs| prefs.lock_or_recover().auto_approve)
+        .unwrap_or(false);
+
+    eprintln!("Clyde: auto_approve={}, timeout={}s", auto_approve, auto_approve_timeout(app).as_secs());
+
+    if auto_approve {
+        let timeout = auto_approve_timeout(app);
+        let app_clone = app.clone();
+        let id = bubble_data.id.clone();
+        let is_elicitation = bubble_data.is_elicitation;
+
+        // Clone states for use in async task
+        let pending_perms_clone = pending_perms.clone();
+        let approval_queue_clone = approval_queue.clone();
+        let bubble_map_clone = bubble_map.clone();
+
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(timeout).await;
+
+            // Send auto-approve decision
+            let decision = if is_elicitation {
+                HookDecision::Elicitation(ElicitationDecision::Cancel)
+            } else {
+                HookDecision::Permission(PermDecision::Allow)
+            };
+
+            if let Some(tx) = pending_perms_clone.lock_or_recover().remove(&id) {
+                let _ = tx.send(decision);
+            }
+
+            // Close bubble UI
+            permission::prepare_close_bubble(&app_clone, &bubble_map_clone, &id);
+
+            // Clean up queue and activate next
+            {
+                let mut queue = approval_queue_clone.lock_or_recover();
+                queue.request_data.remove(&id);
+                if queue.active_request_id.as_deref() == Some(&id) {
+                    queue.active_request_id = None;
+                } else {
+                    queue
+                        .queued_request_ids
+                        .retain(|queued_id| queued_id != &id);
+                }
+            }
+
+            activate_next_permission(&app_clone, &pending_perms_clone, &approval_queue_clone, &bubble_map_clone);
+        });
+    }
+
+    true
 }
 
 fn close_permission_request_ui(

@@ -67,7 +67,8 @@ pub fn show_bubble(app: &AppHandle, bubbles: &BubbleMap, data: BubbleData) -> bo
 
     let id = data.id.clone();
     let label = format!("bubble-{}", id);
-    let url = format!("src/windows/bubble/index.html?entry_id={id}");
+    let url = format!("clyde://src/windows/bubble/index.html?entry_id={id}");
+    let window_url = url::Url::parse(&url).unwrap();
 
     let (x_phys, y_phys) = initial_bubble_position(app, bubbles);
     let scale = get_scale(app);
@@ -75,7 +76,7 @@ pub fn show_bubble(app: &AppHandle, bubbles: &BubbleMap, data: BubbleData) -> bo
     let x_log = x_phys as f64 / scale;
     let y_log = y_phys as f64 / scale;
 
-    let mut builder = WebviewWindowBuilder::new(app, &label, WebviewUrl::App(url.into()))
+    let mut builder = WebviewWindowBuilder::new(app, &label, WebviewUrl::External(window_url))
         .title("")
         .inner_size(BUBBLE_WIDTH as f64, 200.0)
         .position(x_log, y_log)

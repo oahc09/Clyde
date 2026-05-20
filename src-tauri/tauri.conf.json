@@ -23,7 +23,7 @@
         "skipTaskbar": true,
         "resizable": false,
         "visible": false,
-        "url": "src/windows/pet/index.html"
+        "url": "clyde://src/windows/pet/index.html"
       },
       {
         "label": "hit",
@@ -37,7 +37,7 @@
         "skipTaskbar": true,
         "resizable": false,
         "visible": false,
-        "url": "src/windows/hit/index.html"
+        "url": "clyde://src/windows/hit/index.html"
       }
     ]
   },
@@ -50,10 +50,6 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": {
-      "../assets/svg": "svg",
-      "../hooks": "hooks"
-    },
     "windows": {
       "nsis": {
         "installMode": "currentUser",

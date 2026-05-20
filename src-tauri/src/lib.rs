@@ -19,6 +19,7 @@ mod update_check;
 mod util;
 mod windows;
 
+use include_dir::{include_dir, Dir};
 use http_server::{ApprovalQueue, PendingPerms};
 use prefs::SharedPrefs;
 use serde::Serialize;
@@ -28,6 +29,8 @@ use std::sync::{Arc, Mutex};
 use tauri::window::Color;
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition};
 use util::MutexExt;
+
+static DIST_DIR: Dir = include_dir!("D:/Work/Github/Clyde/dist");
 
 // Animation duration constants (milliseconds)
 const YAWN_DURATION_MS: u64 = 3000;
@@ -1857,6 +1860,51 @@ fn start_cleanup_loop(app: &AppHandle, state: SharedState) {
     });
 }
 
+/// MIME type helper for embedded dist files.
+fn mime_for_path(path: &str) -> &'static str {
+    match path.rfind('.').map(|i| &path[i+1..]) {
+        Some("html") => "text/html; charset=utf-8",
+        Some("js")   => "application/javascript; charset=utf-8",
+        Some("mjs")  => "application/javascript; charset=utf-8",
+        Some("css")  => "text/css; charset=utf-8",
+        Some("svg")  => "image/svg+xml",
+        Some("json") => "application/json; charset=utf-8",
+        Some("png")  => "image/png",
+        Some("ico")  => "image/x-icon",
+        Some("woff") => "font/woff",
+        Some("woff2")=> "font/woff2",
+        Some("ttf")  => "font/ttf",
+        Some("wasm") => "application/wasm",
+        _                  => "application/octet-stream",
+    }
+}
+
+/// Serve a file from the embedded `dist/` directory.
+fn serve_embedded(path: &str) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
+    // Strip leading '/' and normalize back-slashes
+    let rel = path.strip_prefix('/').unwrap_or(path).replace('\\', "/");
+    let rel = rel.trim_start_matches('/');
+    
+    // dist/ structure:
+    //   dist/src/windows/pet/index.html  (HTML files)
+    //   dist/src/windows/hit/index.html
+    //   dist/assets/*.js, *.css, etc.  (assets at top level)
+    //
+    // Protocol paths:
+    //   /windows/pet/index.html → src/windows/pet/index.html
+    //   /assets/pet-xxx.js → assets/pet-xxx.js
+    let rel = if rel.starts_with("windows/") || rel.starts_with("hit/") {
+        format!("src/{rel}")
+    } else {
+        rel.to_string()
+    };
+    
+    DIST_DIR
+        .get_file(&rel)
+        .map(|f| f.contents().to_vec())
+        .ok_or_else(|| format!("embedded file not found: {rel}").into())
+}
+
 pub fn run() {
     let drag_state: SharedDrag = Arc::new(Mutex::new(DragState {
         active: false,
@@ -1894,6 +1942,26 @@ pub fn run() {
         .manage(mode_tracker.clone())
         .manage(shared_tray.clone())
         .manage(hidden_flag)
+        .register_uri_scheme_protocol("clyde", move |_app, request| {
+            let path = request.uri().path();
+            let response = match serve_embedded(path) {
+                Ok(bytes) => {
+                    let mime = mime_for_path(path);
+                    tauri::http::Response::builder()
+                        .header("content-type", mime)
+                        .body(bytes)
+                        .unwrap_or_else(|_| tauri::http::Response::new(Vec::new()))
+                }
+                Err(_) => {
+                    let msg = format!("404: {path}");
+                    tauri::http::Response::builder()
+                        .status(tauri::http::StatusCode::NOT_FOUND)
+                        .body(msg.into_bytes())
+                        .unwrap_or_else(|_| tauri::http::Response::new(Vec::new()))
+                }
+            };
+            response
+        })
         .invoke_handler(tauri::generate_handler![
             drag_start, drag_move, drag_end, exit_mini_mode,
             hit_double_click, hit_flail, show_context_menu,
